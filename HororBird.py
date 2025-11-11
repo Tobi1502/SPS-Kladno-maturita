@@ -1,19 +1,7 @@
-"""
-Flappy Dino - plně flexibilní temná verze s kamennými pilíři
-Autor: Toby
 
-Popis:
-- Menu s moderním tlačítkem Hrát s hover efektem.
-- Okno resizable + fullscreen (klávesa F).
-- HUD se skóre a vzdáleností s elegantním fontem.
-- Pozadí a překážky lze nahradit reálnými obrázky pomocí proměnných níže.
-- Překážky jsou kamenné pilíře: horní a dolní část, mezera je dostatečně velká pro dva ptáčky.
-- Horní a spodní pilíř mají odlišný vizuální vzhled (gradient tmavší / světlejší), působí jako kamenné sloupy.
-- Pilíře se nyní plně přizpůsobí velikosti okna nebo fullscreen.
-- Temná, strašidelná atmosféra.
-- Horizontální vzdálenost mezi pilíři je nyní třikrát větší než původně.
-- První pilíře se spawnou blíže k ptáčkovi pro větší obtížnost na startu.
-"""
+'''Flappy Dino
+Autor: Toby
+'''
 
 import pygame
 import random
