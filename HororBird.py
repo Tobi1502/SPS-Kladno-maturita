@@ -1,21 +1,34 @@
-
-'''Flappy Dino
+"""
+Flappy Dino - plně flexibilní temná verze s kamennými pilíři a hudbou
 Autor: Toby
-'''
+
+Popis:
+- Menu s moderním tlačítkem Hrát s hover efektem.
+- Okno resizable + fullscreen (klávesa F).
+- HUD se skóre a vzdáleností s elegantním fontem.
+- Pozadí a překážky lze nahradit reálnými obrázky.
+- Překážky jsou kamenné pilíře: horní a dolní část, mezera je dostatečně velká pro dva ptáčky.
+- Hudba: MP3 soubor přehráván stále dokola + tlačítko ztlumit a posuvník hlasitosti v levém dolním rohu.
+"""
 
 import pygame
 import random
 import sys
+from db import init_db, get_db
 
 # --------------------------- Konfigurace ---------------------------------
 SCREEN_WIDTH = 900
 SCREEN_HEIGHT = 600
 FPS = 60
 
-# Cesty k obrázkům (vlož sem cesty k obrázkům, pokud chceš používat vlastní)
-BIRD_IMG_PATH = "C:\\Users\\tobik\\Desktop\\Projekt M\\Bird.png"
-BACKGROUND_IMG_PATH = "C:\\Users\\tobik\\Desktop\\Projekt M\\Džungle.png"
-PILLAR_IMG_PATH = "C:\\Users\\tobik\\Desktop\\Projekt M\\Pilíř2.png"
+# Cesty k obrázkům
+BIRD_IMG_PATH = "imgs/Bird.png"
+BACKGROUND_IMG_PATH = "imgs/Džungle.png"
+PILLAR_IMG_PATH = "imgs/Pilíř2.png"
+MENU_IMG_PATH = "imgs/MenuTitle.png"
+
+# Cesta k hudbě
+MUSIC_PATH = "imgs/Untitled #9 - Smáskifa 1 - Sigur Rós.mp3"
 
 # Barvy a styl
 BG_COLOR = (15, 30, 15)
@@ -23,9 +36,11 @@ TEXT_COLOR = (240, 240, 240)
 BUTTON_COLOR = (70, 20, 20)
 BUTTON_HOVER = (120, 20, 20)
 BIRD_COLOR = (240, 200, 60)
+SLIDER_COLOR = (180, 180, 180)
+SLIDER_KNOB = (255, 255, 255)
 
 # Pták
-BIRD_SIZE = 108
+BIRD_SIZE = 128
 GRAVITY = 0.45
 FLAP_STRENGTH = -9.5
 
@@ -39,9 +54,7 @@ SPEED_INCREMENT_PER_SCORE = 0.18
 MAX_HEIGHT_DIFF = 120
 MIN_GAP_RATIO = 0.25
 NEXT_GAP_EXTRA = 90
-
-# Nová proměnná pro horizontální vzdálenost mezi pilíři (3x větší)
-MIN_HORIZONTAL_GAP = 3 * 200  # původně ~200 px
+MIN_HORIZONTAL_GAP = 3 * 200
 
 # --------------------------- Datové struktury ----------------------------
 class Bird:
@@ -113,9 +126,70 @@ def draw_button(surface, rect, text, font, hover=False):
     text_s = font.render(text, True, TEXT_COLOR)
     surface.blit(text_s, text_s.get_rect(center=rect.center))
 
+def draw_volume_controls(surface, mute_rect, slider_rect, knob_rect, font, is_muted):
+    draw_button(surface, mute_rect, "🔇" if is_muted else "🔊", font, False)
+    pygame.draw.rect(surface, SLIDER_COLOR, slider_rect)
+    pygame.draw.circle(surface, SLIDER_KNOB, knob_rect.center, knob_rect.width//2)
+def get_player_name(screen, font):
+    name = ""
+    entering = True
+    clock = pygame.time.Clock()
+
+
+    while entering:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN and len(name) > 0:
+                    entering = False
+                elif event.key == pygame.K_BACKSPACE:
+                    name = name[:-1]
+                else:
+                    if len(name) < 12 and event.unicode.isprintable():
+                        name += event.unicode
+
+        screen.fill((10, 15, 30))
+        title = font.render("Zadej jméno hráče", True, (240,240,240))
+        name_txt = font.render(name, True, (0,255,0))
+        hint = font.render("ENTER pro potvrzení", True, (200,200,200))
+
+        screen.blit(title, title.get_rect(center=(screen.get_width()//2, screen.get_height()//2 - 60)))
+        screen.blit(name_txt, name_txt.get_rect(center=(screen.get_width()//2, screen.get_height()//2)))
+        screen.blit(hint, hint.get_rect(center=(screen.get_width()//2, screen.get_height()//2 + 50)))
+
+        pygame.display.flip()
+        clock.tick(30)
+
+    return name
+
+def save_score(player, score):
+    try:
+        # Ensure score is an integer and player is a short string
+        score_val = int(score)
+    except Exception:
+        # If score cannot be converted, don't save
+        print(f"save_score: invalid score for player={player}: {score}")
+        return
+    player_val = str(player).strip()[:64]
+    if not player_val:
+        print(f"save_score: empty player name, not saving score={score_val}")
+        return
+    db = get_db()
+    db.execute(
+        "INSERT INTO scores (player, score) VALUES (?, ?)",
+        (player_val, score_val)
+    )
+    db.commit()
+    db.close()
+    print(f"Saved score -> player={player_val} score={score_val}")
 # --------------------------- Hlavní hra ----------------------------------
 def main():
     pygame.init()
+    pygame.mixer.init()
+    init_db()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
     pygame.display.set_caption("Flappy Dino")
     clock = pygame.time.Clock()
@@ -123,9 +197,36 @@ def main():
     font = pygame.font.SysFont('Verdana', 28, bold=True)
     large_font = pygame.font.SysFont('Verdana', 46, bold=True)
 
-    bird_img = pygame.image.load(BIRD_IMG_PATH) if BIRD_IMG_PATH else None
-    bg_img = pygame.image.load(BACKGROUND_IMG_PATH) if BACKGROUND_IMG_PATH else None
-    pillar_img = pygame.image.load(PILLAR_IMG_PATH) if PILLAR_IMG_PATH else None
+    # Načtení obrázků
+    try:
+        bird_img = pygame.image.load(BIRD_IMG_PATH)
+    except:
+        bird_img = None
+    try:
+        bg_img = pygame.image.load(BACKGROUND_IMG_PATH)
+    except:
+        bg_img = None
+    try:
+        pillar_img = pygame.image.load(PILLAR_IMG_PATH)
+    except:
+        pillar_img = None
+    try:
+        menu_img = pygame.image.load(MENU_IMG_PATH)
+    except:
+        print("Menu obrázek se nepodařilo načíst, bude použit text")
+        menu_img = None
+
+    # Hudba
+    try:
+        pygame.mixer.music.load(MUSIC_PATH)
+        pygame.mixer.music.play(-1)  # nekonečné opakování
+        volume = 0.5
+        pygame.mixer.music.set_volume(volume)
+        is_muted = False
+    except:
+        print("Hudbu se nepodařilo načíst")
+        volume = 0.5
+        is_muted = False
 
     in_menu = True
     fullscreen = False
@@ -135,6 +236,8 @@ def main():
     pillars = []
     score = 0
     distance = 0
+    player_name = ""
+    score_saved = False
     speed = BASE_SPEED
     last_spawn = 0
     game_over = False
@@ -147,7 +250,8 @@ def main():
         distance = 0.0
         speed = BASE_SPEED
         last_spawn = pygame.time.get_ticks()
-        return bird, pillars, score, distance, speed, last_spawn
+        last_top_height = None
+        return bird, pillars, score, distance, speed, last_spawn, last_top_height
 
     while running:
         dt = clock.tick(FPS)/1000
@@ -170,49 +274,79 @@ def main():
                     else:
                         screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
                 elif event.key == pygame.K_SPACE:
-                    if in_menu:
-                        in_menu = False
-                        SCREEN_W, SCREEN_H = screen.get_size()
-                        bird, pillars, score, distance, speed, last_spawn = start_new_game(SCREEN_W, SCREEN_H)
-                        game_over = False
-                    elif bird and not game_over:
+                    if bird and not game_over:
                         bird.vy = FLAP_STRENGTH
                 elif event.key == pygame.K_r and game_over:
                     SCREEN_W, SCREEN_H = screen.get_size()
-                    bird, pillars, score, distance, speed, last_spawn = start_new_game(SCREEN_W, SCREEN_H)
+                    bird, pillars, score, distance, speed, last_spawn, last_top_height = start_new_game(SCREEN_W, SCREEN_H)
                     game_over = False
-                    last_top_height = None
+                    score_saved = False
+
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = event.pos
+                if mute_rect.collidepoint(mx,my):
+                    is_muted = not is_muted
+                    pygame.mixer.music.set_volume(0 if is_muted else volume)
+                elif slider_rect.collidepoint(mx,my):
+                    knob_rect.centerx = max(slider_rect.left, min(mx, slider_rect.right))
+                    volume = (knob_rect.centerx - slider_rect.left)/slider_rect.width
+                    pygame.mixer.music.set_volume(volume)
+                    is_muted = volume==0
+
+            elif event.type == pygame.MOUSEMOTION:
+                if pygame.mouse.get_pressed()[0] and slider_rect.collidepoint(event.pos):
+                    mx = event.pos[0]
+                    knob_rect.centerx = max(slider_rect.left, min(mx, slider_rect.right))
+                    volume = (knob_rect.centerx - slider_rect.left)/slider_rect.width
+                    pygame.mixer.music.set_volume(volume)
+                    is_muted = volume==0
 
         w, h = screen.get_size()
         mouse_x, mouse_y = pygame.mouse.get_pos()
-
         MIN_GAP_CURRENT = max(int(h*MIN_GAP_RATIO), BIRD_SIZE*2 + 20)
 
+        # --- Hud ovládání hlasitosti ---
+        mute_rect = pygame.Rect(10, h-50, 50, 40)
+        slider_rect = pygame.Rect(70, h-40, 150, 10)
+        knob_rect = pygame.Rect(0, h-45, 20, 20)
+        knob_rect.centerx = slider_rect.left + int(volume*slider_rect.width)
+
+        # --- Menu ---
         if in_menu:
             draw_background(screen, w, h, bg_img)
-            title = large_font.render("Flappy Dino", True, TEXT_COLOR)
-            screen.blit(title, title.get_rect(center=(w//2, h//4)))
+            
+            if menu_img:
+                img_w = int(w * 0.30)
+                img_h = int(menu_img.get_height() * (img_w / menu_img.get_width()))
+                scaled_img = pygame.transform.scale(menu_img, (img_w, img_h))
+                screen.blit(scaled_img, scaled_img.get_rect(center=(w//2, h//4)))
+            else:
+                title = large_font.render("Flappy Dino", True, TEXT_COLOR)
+                screen.blit(title, title.get_rect(center=(w//2, h//4)))
+
             button_rect = pygame.Rect(w//2-130, h//2-35, 260, 70)
             hover = button_rect.collidepoint(mouse_x, mouse_y)
             draw_button(screen, button_rect, "Hrát", font, hover)
-            hint = font.render("Stiskni F pro fullscreen. Mezerník nebo klik start.", True, TEXT_COLOR)
+            hint = font.render("Stiskni F pro fullscreen.", True, TEXT_COLOR)
             screen.blit(hint, hint.get_rect(center=(w//2, h//2 + 60)))
+
+            draw_volume_controls(screen, mute_rect, slider_rect, knob_rect, font, is_muted)
+            
             if pygame.mouse.get_pressed()[0] and hover:
-                in_menu = False
-                SCREEN_W, SCREEN_H = screen.get_size()
-                bird, pillars, score, distance, speed, last_spawn = start_new_game(SCREEN_W, SCREEN_H)
-                game_over = False
+                    player_name = get_player_name(screen, font)
+                    in_menu = False
+                    SCREEN_W, SCREEN_H = screen.get_size()
+                    bird, pillars, score, distance, speed, last_spawn, last_top_height = start_new_game(SCREEN_W, SCREEN_H)
+                    game_over = False
+                    score_saved = False
             pygame.display.flip()
             continue
 
+        # --- Hra ---
         if bird and not game_over:
-            w, h = screen.get_size()
-            # --- Spawn pilířů ---
             if not pillars:
-                # první pilíře spawnou blíže pro vyšší obtížnost
                 gap_x = w * 0.6
             else:
-                # následující páry pilířů s horizontálním gapem
                 gap_x = pillars[-1].x + MIN_HORIZONTAL_GAP
 
             if not pillars or (pillars[-1].x + PILLAR_WIDTH < w):
@@ -224,13 +358,12 @@ def main():
                 bottom_height = h - top_height - MIN_GAP_CURRENT
                 pillars.append(Pillar(gap_x, top_height, True))
                 pillars.append(Pillar(gap_x, bottom_height, False))
-                last_top_height = top_height + NEXT_GAP_EXTRA
+                last_top_height = top_height
 
             for p in pillars:
                 p.x -= speed
             pillars = [p for p in pillars if p.x + p.width > -50]
 
-            # --- Pták ---
             bird.vy += GRAVITY
             bird.y += bird.vy
             if bird.y - BIRD_SIZE/2 <=0 or bird.y + BIRD_SIZE/2 >= h:
@@ -251,17 +384,21 @@ def main():
                 speed += SPEED_INCREMENT_PER_SCORE
             distance += speed*dt*12
 
-            # --- Kreslení ---
             draw_background(screen, w, h, bg_img)
             for p in pillars:
                 draw_pillar(screen, p, pillar_img, h)
             draw_bird(screen, bird, bird_img)
             draw_hud(screen, score, distance, w, font)
+            draw_volume_controls(screen, mute_rect, slider_rect, knob_rect, font, is_muted)
             pygame.display.flip()
             continue
 
-        # --- Game over ---
+        # Game over
         if game_over:
+            if not score_saved:
+                save_score(player_name, score)
+                score_saved = True
+
             draw_background(screen, w, h, bg_img)
             for p in pillars:
                 draw_pillar(screen, p, pillar_img, h)
@@ -272,6 +409,7 @@ def main():
             screen.blit(over_text, over_text.get_rect(center=(w//2, h//2-40)))
             sub = font.render("Stiskni R pro restart, ESC pro menu", True, TEXT_COLOR)
             screen.blit(sub, sub.get_rect(center=(w//2, h//2+10)))
+            draw_volume_controls(screen, mute_rect, slider_rect, knob_rect, font, is_muted)
             pygame.display.flip()
 
     pygame.quit()
